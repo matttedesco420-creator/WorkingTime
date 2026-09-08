@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>WorkTime</title>
+<meta name="theme-color" content="#263F3C" />
+<meta name="description" content="Arbeitszeit per Timer erfassen, auf Projekte verteilen, Material dokumentieren und als Excel/PDF exportieren." />
+
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/favicon.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="WorkTime" />
+
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- Ladeanzeige, damit nie eine komplett leere Seite steht -->
+<div class="boot-screen" id="boot-screen">
+  <div class="boot-inner">
+    <div class="boot-logo">⏱</div>
+    <div class="boot-text">Wird geladen …</div>
+  </div>
+</div>
+
+<!-- ============ AUTH GATE (nur sichtbar, wenn Supabase in config.js konfiguriert ist) ============ -->
+<div class="auth-gate" id="auth-gate" style="display:none;">
+  <div class="auth-card">
+    <div class="auth-logo">⏱</div>
+    <h1 class="auth-title">WorkTime</h1>
+    <p class="auth-sub" id="auth-sub">Melde dich an, um deine Zeiten in der Cloud zu speichern.</p>
+
+    <form id="form-auth">
+      <div class="field">
+        <label for="auth-email">E-Mail</label>
+        <input type="email" id="auth-email" autocomplete="email" required />
+      </div>
+      <div class="field">
+        <label for="auth-password">Passwort</label>
+        <input type="password" id="auth-password" autocomplete="current-password" required minlength="6" />
+      </div>
+      <p class="hint warn" id="auth-error" style="display:none;"></p>
+      <p class="hint ok" id="auth-info" style="display:none;"></p>
+      <button type="submit" class="btn btn-primary btn-block" id="btn-auth-submit">Anmelden</button>
+    </form>
+    <button type="button" class="btn btn-ghost btn-block" id="btn-auth-toggle" style="margin-top:10px;">
+      Noch kein Konto? Registrieren
+    </button>
+  </div>
+</div>
+
+<div class="app-shell" id="app-shell" style="display:none;">
+  <div class="content">
+    <div class="header-row">
+      <p class="wordmark">WorkTime</p>
+      <div class="header-right">
+        <span class="header-date" id="header-date">–</span>
+        <button class="avatar-btn" id="btn-avatar" title="Profil" aria-label="Profil"></button>
+      </div>
+    </div>
+
+    <div id="profile-panel-slot"></div>
+    <div id="view-root"></div>
+  </div>
+</div>
+
+<nav class="bottom-nav" id="bottom-nav" style="display:none;">
+  <button class="nav-btn active" data-view="timer">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2"/><path d="M9 2h6"/></svg>
+    <span>Timer</span>
+  </button>
+  <button class="nav-btn" data-view="entries">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 3v4h8V3"/><path d="M8 11h8M8 15h5"/></svg>
+    <span>Einträge</span>
+  </button>
+  <button class="nav-btn" data-view="projects">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+    <span>Projekte</span>
+  </button>
+  <button class="nav-btn" data-view="overview">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>Übersicht</span>
+  </button>
+</nav>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
