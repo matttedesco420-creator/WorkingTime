@@ -153,7 +153,8 @@ textarea { resize: vertical; min-height: 56px; }
 .entry-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 6px; }
 .entry-date { font-weight: 600; font-size: 13.5px; }
 .entry-time { color: var(--ink-soft); font-size: 12.5px; }
-.entry-activity { font-size: 13.5px; margin: 6px 0; }
+.entry-activities { margin: 6px 0; }
+.activity-line { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; padding: 2px 0; }
 .entry-materials { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .entry-actions { display: flex; gap: 2px; justify-content: flex-end; margin-top: 6px; }
 
@@ -161,6 +162,12 @@ textarea { resize: vertical; min-height: 56px; }
 .material-row { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
 .material-row .name-field { flex: 3; }
 .material-row .qty-field, .material-row .unit-field { flex: 1; }
+
+.activities-block { margin-bottom: 10px; }
+.activity-row { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 8px; flex-wrap: wrap; }
+.activity-row .name-field { flex: 3; min-width: 140px; }
+.activity-row .hours-field { flex: 1; min-width: 70px; }
+.activity-row .adjust-btn { font-size: 11.5px; padding: 8px 8px; white-space: nowrap; }
 
 .error-msg { color: var(--danger); font-size: 13px; margin: 8px 0; }
 
@@ -206,7 +213,8 @@ th { font-weight: 600; color: var(--ink-soft); font-size: 11.5px; }
 
 /* ---- print (PDF export via browser print dialog) ---- */
 @media print {
+  @page { margin: 12mm; }
   body * { visibility: hidden; }
   #print-area, #print-area * { visibility: visible; }
-  #print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 24px; background: #fff; }
+  #print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 0; background: #fff; }
 }

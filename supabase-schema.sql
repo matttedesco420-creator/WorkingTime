@@ -51,10 +51,16 @@ create table if not exists public.entries (
   pause_hours numeric not null default 0,
   hours numeric not null default 0,
   activity text,
+  activities jsonb not null default '[]',
   materials jsonb not null default '[]',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Falls du das Skript schon einmal ausgeführt hattest, bevor es die Tätigkeiten
+-- als Liste (statt eines einzelnen Textfelds) gab: fügt die neue Spalte sicher
+-- nach, ohne bestehende Daten anzufassen.
+alter table public.entries add column if not exists activities jsonb not null default '[]';
 
 -- Laufende Timer-Sitzungen (BEREIT/LÄUFT/PAUSE/ABSCHLUSS). Wird synchronisiert,
 -- damit ein zweites Gerät mit demselben Konto den aktuellen Stand sieht.

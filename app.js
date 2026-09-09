@@ -108,7 +108,9 @@
       state.entries = (entRes.data || []).map((r) => ({
         id: r.id, date: r.date, projectId: r.project_id || "", worker: r.worker,
         start: r.start_time || "", end: r.end_time || "", pause: Number(r.pause_hours) || 0,
-        hours: Number(r.hours) || 0, activity: r.activity || "", materials: r.materials || [],
+        hours: Number(r.hours) || 0,
+        activities: (r.activities && r.activities.length) ? r.activities : (r.activity ? [{ id: uid(), desc: r.activity, hours: "" }] : []),
+        materials: r.materials || [],
       }));
       state.timers = (timRes.data || []).map((r) => ({
         id: r.id, isOwner: r.is_owner, worker: r.worker || "", projectId: r.project_id || "",
@@ -166,7 +168,7 @@
       await sb.from("entries").insert({
         id: e.id, user_id: currentUser.id, project_id: e.projectId || null, worker: e.worker, date: e.date,
         start_time: e.start || null, end_time: e.end || null, pause_hours: e.pause || 0, hours: e.hours || 0,
-        activity: e.activity || "", materials: e.materials || [],
+        activities: e.activities || [], materials: e.materials || [],
       });
     } catch (err) { console.warn("Cloud: Eintrag anlegen fehlgeschlagen:", err); }
   }
@@ -175,7 +177,7 @@
     try {
       await sb.from("entries").update({
         project_id: e.projectId || null, worker: e.worker, date: e.date, start_time: e.start || null,
-        end_time: e.end || null, pause_hours: e.pause || 0, hours: e.hours || 0, activity: e.activity || "",
+        end_time: e.end || null, pause_hours: e.pause || 0, hours: e.hours || 0, activities: e.activities || [],
         materials: e.materials || [], updated_at: new Date().toISOString(),
       }).eq("id", e.id);
     } catch (err) { console.warn("Cloud: Eintrag aktualisieren fehlgeschlagen:", err); }
@@ -277,6 +279,29 @@
     return { dates, rows };
   }
 
+  // Hours worked per person, broken down by day — used for the "Arbeitszeit pro
+  // Tag" table on the overview page (and therefore also in the PDF export).
+  function buildProjectHoursMatrix(project, entries) {
+    const projEntries = entries.filter((e) => e.projectId === project.id);
+    const dateSet = new Set();
+    const peopleSet = new Set();
+    projEntries.forEach((e) => { dateSet.add(e.date); peopleSet.add(e.worker); });
+    const dates = Array.from(dateSet).sort();
+    const people = Array.from(peopleSet).sort();
+    const rows = people.map((person) => {
+      let total = 0;
+      const byDate = dates.map((d) => {
+        const sum = projEntries.filter((e) => e.date === d && e.worker === person).reduce((s, e) => s + Number(e.hours || 0), 0);
+        total += sum;
+        return Math.round(sum * 100) / 100;
+      });
+      return { person, byDate, total: Math.round(total * 100) / 100 };
+    });
+    const dayTotals = dates.map((d, i) => Math.round(rows.reduce((s, r) => s + r.byDate[i], 0) * 100) / 100);
+    const grandTotal = Math.round(rows.reduce((s, r) => s + r.total, 0) * 100) / 100;
+    return { dates, rows, dayTotals, grandTotal };
+  }
+
   /* ---------------------------------------------------------------- */
   /* State                                                            */
   /* ---------------------------------------------------------------- */
@@ -310,7 +335,13 @@
             .map((w) => (typeof w === "string" ? { id: uid(), name: w.trim() } : { id: w.id || uid(), name: (w.name || "").trim() }))
             .filter((w) => w.name);
         }
-        if (data.entries) state.entries = data.entries;
+        if (data.entries) {
+          state.entries = (data.entries || []).map((e) => {
+            if (e.activities) return e;
+            const { activity, ...rest } = e;
+            return { ...rest, activities: activity ? [{ id: uid(), desc: activity, hours: "" }] : [] };
+          });
+        }
         if (data.timers) state.timers = data.timers;
       }
     } catch (e) { /* no stored data yet */ }
@@ -403,7 +434,7 @@
     t.status = "paused";
     cloudUpdateTimer(t);
   }
-  function confirmFinishData(t, projectId, activity, materials) {
+  function confirmFinishData(t, projectId, activities, materials) {
     const entry = {
       id: uid(),
       date: t.sessionDate || todayISO(),
@@ -413,7 +444,7 @@
       end: fmtClock(),
       pause: 0,
       hours: Math.round((t.accumulatedMs / 3600000) * 100) / 100,
-      activity: (activity || "").trim(),
+      activities,
       materials,
     };
     state.entries.push(entry);
@@ -450,6 +481,23 @@
       const unit = row.querySelector('[data-field="unit"]').value.trim();
       return { id: uid(), name, qty, unit };
     }).filter((m) => m.name);
+  }
+  function readActivityRows(root) {
+    return Array.from(root.querySelectorAll("[data-activity-id]")).map((row) => {
+      const desc = row.querySelector('[data-field="desc"]').value.trim();
+      const hours = row.querySelector('[data-field="ahours"]').value;
+      return { id: uid(), desc, hours: hours === "" ? "" : Number(hours) || 0 };
+    }).filter((a) => a.desc);
+  }
+  // Total worked hours for whichever person-block (owner / extra worker / timer
+  // card) an activity row's ±20% button lives in — used to size the nudge.
+  function findPersonTotalHours(withinEl) {
+    const personBlock = withinEl.closest("[data-person-block]");
+    if (!personBlock) return 0;
+    const hoursInput = personBlock.querySelector('[data-field="hours"]');
+    if (hoursInput) return Number(hoursInput.value) || 0;
+    const totalAttr = personBlock.getAttribute("data-total-hours");
+    return totalAttr ? Number(totalAttr) || 0 : 0;
   }
   function recalcTimeFields(block) {
     const start = block.querySelector('[data-field="start"]').value;
@@ -511,6 +559,26 @@
       <button type="button" class="btn btn-ghost" data-action="add-material-row">${ICONS.plus} Material hinzufügen</button>
     </div>`;
   }
+  function activityRowHTML(a) {
+    a = a || {};
+    return `
+    <div class="activity-row" data-activity-id="${uid()}">
+      <div class="field name-field"><input type="text" placeholder="Tätigkeit" data-field="desc" value="${esc(a.desc || "")}"></div>
+      <div class="field hours-field"><input type="number" step="0.25" min="0" placeholder="Std." data-field="ahours" value="${esc(a.hours ?? "")}"></div>
+      <button type="button" class="btn-icon adjust-btn" data-action="adjust-activity-hours" data-delta="-20" title="−20 % der Gesamtstunden">−20%</button>
+      <button type="button" class="btn-icon adjust-btn" data-action="adjust-activity-hours" data-delta="20" title="+20 % der Gesamtstunden">+20%</button>
+      <button type="button" class="btn-icon danger" data-action="remove-activity-row" title="Zeile entfernen">${ICONS.trash}</button>
+    </div>`;
+  }
+  function activityEditorHTML(activities) {
+    const list = activities && activities.length ? activities : [{}];
+    return `
+    <div class="activities-block" data-activities-block>
+      <label class="small-label">Tätigkeiten</label>
+      <div data-activity-rows>${list.map(activityRowHTML).join("")}</div>
+      <button type="button" class="btn btn-ghost" data-action="add-activity-row">${ICONS.plus} Tätigkeit hinzufügen</button>
+    </div>`;
+  }
   function timeFieldsHTML(value) {
     value = value || {};
     const computed = !!(value.start && value.end);
@@ -525,7 +593,7 @@
   function extraWorkerBlockHTML() {
     const options = teamWorkers().map((w) => `<option value="${esc(w)}">${esc(w)}</option>`).join("");
     return `
-    <div class="extra-worker-block" data-extra-id="${uid()}">
+    <div class="extra-worker-block" data-extra-id="${uid()}" data-person-block>
       <div class="extra-worker-head">
         <div class="field">
           <label>Mitarbeiter</label>
@@ -534,6 +602,7 @@
         <button type="button" class="btn-icon danger" data-action="remove-extra-worker" title="Entfernen">${ICONS.trash}</button>
       </div>
       ${timeFieldsHTML({})}
+      ${activityEditorHTML([])}
     </div>`;
   }
   function manualFormHTML() {
@@ -546,14 +615,15 @@
         <div class="field"><label>Projekt</label><select data-field="projectId"><option value="">– wählen –</option>${projectOptions}</select></div>
       </div>
       <p class="small-label">DEINE ARBEITSZEIT (${esc(ownerDisplayName())})</p>
-      <div data-owner-time>${timeFieldsHTML({})}</div>
+      <div data-owner-time data-person-block>
+        ${timeFieldsHTML({})}
+        ${activityEditorHTML([])}
+      </div>
       <div id="extra-workers-container"></div>
       ${hasWorkers
         ? `<button type="button" class="btn btn-ghost" id="add-extra-worker-btn" data-action="add-extra-worker" style="margin-bottom:14px;">${ICONS.plus} Mitarbeiter hinzufügen</button>`
         : `<p class="hint">Noch keine weiteren Mitarbeiter angelegt. <button type="button" class="link-btn" data-action="goto-projects-view">Jetzt einrichten</button></p>`}
-      <div class="field-row">
-        <div class="field" style="flex:1 1 100%;"><label>Tätigkeit</label><textarea data-field="activity" placeholder="Was wurde gemacht?"></textarea></div>
-      </div>
+      <p class="hint" style="margin-top:4px;">Material wird nur einmal erfasst und dir (${esc(ownerDisplayName())}) zugerechnet.</p>
       ${materialEditorHTML([])}
       <p class="error-msg" data-form-error></p>
       <div class="field-row" style="margin-top:14px; margin-bottom:0;">
@@ -572,9 +642,9 @@
         <div class="field"><label>Projekt</label><select data-field="projectId"><option value="">– wählen –</option>${projectOptions}</select></div>
         <div class="field"><label>Mitarbeiter</label><select data-field="worker"><option value="">– wählen –</option>${workerOptions}</select></div>
       </div>
-      ${timeFieldsHTML({ start: entry.start, end: entry.end, pause: entry.pause ? String(entry.pause) : "", hours: String(entry.hours ?? "") })}
-      <div class="field-row">
-        <div class="field" style="flex:1 1 100%;"><label>Tätigkeit</label><textarea data-field="activity" placeholder="Was wurde gemacht?">${esc(entry.activity || "")}</textarea></div>
+      <div data-person-block>
+        ${timeFieldsHTML({ start: entry.start, end: entry.end, pause: entry.pause ? String(entry.pause) : "", hours: String(entry.hours ?? "") })}
+        ${activityEditorHTML(entry.activities || [])}
       </div>
       ${materialEditorHTML(entry.materials || [])}
       <p class="error-msg" data-form-error></p>
@@ -593,6 +663,10 @@
     const materialsHtml = e.materials && e.materials.length
       ? `<div class="entry-materials">${e.materials.map((m) => `<span class="pill pill-neutral">${esc(m.name)}${m.qty ? ` · ${m.qty}${m.unit ? " " + esc(m.unit) : ""}` : ""}</span>`).join("")}</div>`
       : "";
+    const activities = e.activities && e.activities.length ? e.activities : (e.activity ? [{ id: "legacy", desc: e.activity, hours: "" }] : []);
+    const activitiesHtml = activities.length
+      ? `<div class="entry-activities">${activities.map((a) => `<div class="activity-line"><span>${esc(a.desc)}</span>${a.hours !== "" && a.hours != null ? `<span class="num">${a.hours} h</span>` : ""}</div>`).join("")}</div>`
+      : "";
     const deleteControls = state.deleteConfirmId === e.id
       ? `<button type="button" class="btn-icon danger" data-action="confirm-delete-entry" data-entry-id="${e.id}" title="Wirklich löschen">${ICONS.check}</button>
          <button type="button" class="btn-icon" data-action="cancel-delete-entry" title="Abbrechen">${ICONS.x}</button>`
@@ -606,7 +680,7 @@
         </div>
         <span class="pill" style="background:${badgeColor}">${esc(badgeLabel)} · ${Number(e.hours || 0).toFixed(2)} h</span>
       </div>
-      ${e.activity ? `<p class="entry-activity">${esc(e.activity)}</p>` : ""}
+      ${activitiesHtml}
       ${materialsHtml}
       <div class="entry-actions">
         <button type="button" class="btn-icon" data-action="edit-entry" data-entry-id="${e.id}" title="Bearbeiten">${ICONS.pencil}</button>
@@ -627,14 +701,14 @@
         ? `<p class="hint">Noch keine Projekte angelegt. <button type="button" class="link-btn" data-action="goto-projects-view">Jetzt anlegen</button></p>`
         : `<div class="field"><label>Projekt</label><select data-field="finish-project"><option value="">– Projekt wählen –</option>${state.projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></div>`;
       return `
-      <div class="timer-card finish-card ${sizeClass}" data-timer-card data-timer-id="${t.id}">
+      <div class="timer-card finish-card ${sizeClass}" data-timer-card data-timer-id="${t.id}" data-person-block data-total-hours="${(ms / 3600000).toFixed(2)}">
         <div class="timer-top">
           <span class="status-dot ${statusClassMap[t.status]}"></span>
           <span class="status-label">${esc(displayName)} · Feierabend</span>
         </div>
         <p class="hint" style="margin:2px 0 12px 0;">${formatElapsed(ms)} erfasst</p>
         ${projectField}
-        <div class="field"><label>Tätigkeit</label><textarea data-field="finish-activity" placeholder="Was wurde gemacht?"></textarea></div>
+        ${activityEditorHTML([])}
         ${materialEditorHTML([])}
         <div class="field-row" style="margin-top:14px;">
           <button type="button" class="btn btn-primary" data-action="confirm-finish" data-timer-id="${t.id}">${ICONS.check} Eintrag abschließen</button>
@@ -868,11 +942,8 @@
 
     const p = projectById(selected);
     const { dates, rows } = buildProjectMaterialMatrix(p, state.entries);
-    const projectEntries = state.entries.filter((e) => e.projectId === p.id);
-    const totalHours = projectEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
-    const workerHoursMap = {};
-    projectEntries.forEach((e) => { workerHoursMap[e.worker] = (workerHoursMap[e.worker] || 0) + Number(e.hours || 0); });
-    const workerHours = Object.entries(workerHoursMap).sort((a, b) => b[1] - a[1]);
+    const hoursMatrix = buildProjectHoursMatrix(p, state.entries);
+    const totalHours = hoursMatrix.grandTotal;
 
     html += `
       <div id="print-area">
@@ -882,10 +953,10 @@
             <span class="overview-hours">Gesamt: <span class="num">${totalHours.toFixed(2)} h</span></span>
           </div>
           ${p.description ? `<p class="overview-desc">${esc(p.description)}</p>` : ""}
-          <p class="small-label">STUNDEN JE MITARBEITER</p>
-          ${workerHours.length === 0
+          <p class="small-label">ARBEITSZEIT PRO TAG</p>
+          ${hoursMatrix.rows.length === 0
             ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Noch keine Stunden erfasst.</p>`
-            : workerHours.map(([w, h]) => `<div class="today-row"><span>${esc(w)}</span><span class="num">${h.toFixed(2)} h</span></div>`).join("")}
+            : `<div style="overflow-x:auto;"><table><thead><tr><th>Mitarbeiter</th>${hoursMatrix.dates.map((d) => `<th class="num">${fmtDate(d)}</th>`).join("")}<th>Gesamt</th></tr></thead><tbody>${hoursMatrix.rows.map((r) => `<tr><td>${esc(r.person)}</td>${r.byDate.map((v) => `<td class="num">${v ? v : "–"}</td>`).join("")}<td class="num" style="font-weight:600;">${r.total}</td></tr>`).join("")}<tr><td style="font-weight:700;">Gesamt</td>${hoursMatrix.dayTotals.map((v) => `<td class="num" style="font-weight:600;">${v ? v : "–"}</td>`).join("")}<td class="num" style="font-weight:700;">${hoursMatrix.grandTotal}</td></tr></tbody></table></div>`}
           <p class="small-label" style="margin-top:14px;">MATERIAL</p>
           ${rows.length === 0
             ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Kein Material erfasst.</p>`
@@ -924,28 +995,34 @@
     const errorEl = form.querySelector("[data-form-error]");
     if (!date || !projectId) { errorEl.textContent = "Bitte Datum und Projekt angeben."; return; }
 
-    const activity = form.querySelector('[data-field="activity"]').value.trim();
     const materials = readMaterialRows(form.querySelector("[data-materials-block]"));
-    const owner = readTimeFieldsRaw(form.querySelector("[data-owner-time]"));
+    const ownerBlock = form.querySelector("[data-owner-time]");
+    const owner = readTimeFieldsRaw(ownerBlock);
+    const ownerActivities = readActivityRows(ownerBlock);
 
     const newEntries = [];
+    let materialsAssigned = false; // material is only ever attributed once (to the owner if possible)
     if (owner.start || owner.end || owner.hours) {
       newEntries.push({
         id: uid(), date, projectId, worker: ownerDisplayName(),
         start: owner.start, end: owner.end, pause: Number(owner.pause) || 0, hours: Number(owner.hours) || 0,
-        activity, materials: cloneMaterials(materials),
+        activities: ownerActivities, materials: cloneMaterials(materials),
       });
+      materialsAssigned = true;
     }
     form.querySelectorAll("[data-extra-id]").forEach((block) => {
       const worker = block.querySelector('[data-role="extra-worker-select"]').value;
       if (!worker) return;
       const tf = readTimeFieldsRaw(block);
       if (!tf.start && !tf.end && !tf.hours) return;
+      const workerActivities = readActivityRows(block);
+      const giveMaterial = !materialsAssigned; // fallback: if there's no owner entry, the first worker entry gets it
       newEntries.push({
         id: uid(), date, projectId, worker,
         start: tf.start, end: tf.end, pause: Number(tf.pause) || 0, hours: Number(tf.hours) || 0,
-        activity, materials: cloneMaterials(materials),
+        activities: workerActivities, materials: giveMaterial ? cloneMaterials(materials) : [],
       });
+      if (giveMaterial) materialsAssigned = true;
     });
 
     if (newEntries.length === 0) { errorEl.textContent = "Bitte mindestens eine Arbeitszeit eintragen."; return; }
@@ -962,14 +1039,16 @@
     const errorEl = form.querySelector("[data-form-error]");
     if (!date || !projectId || !worker) { errorEl.textContent = "Bitte Datum, Projekt und Mitarbeiter angeben."; return; }
 
-    const tf = readTimeFieldsRaw(form.querySelector("[data-time-fields]"));
-    const activity = form.querySelector('[data-field="activity"]').value.trim();
+    const personBlock = form.querySelector("[data-person-block]");
+    const tf = readTimeFieldsRaw(personBlock);
+    const activities = readActivityRows(personBlock);
     const materials = readMaterialRows(form.querySelector("[data-materials-block]"));
     const entry = state.entries.find((e) => e.id === state.editingEntryId);
     if (!entry) return;
     entry.date = date; entry.projectId = projectId; entry.worker = worker;
     entry.start = tf.start; entry.end = tf.end; entry.pause = Number(tf.pause) || 0; entry.hours = Number(tf.hours) || 0;
-    entry.activity = activity; entry.materials = materials;
+    entry.activities = activities; entry.materials = materials;
+    delete entry.activity; // migrate away from the old single-string field
 
     state.showEditForm = false;
     state.editingEntryId = null;
@@ -994,7 +1073,7 @@
       Ende: e.end || "",
       "Pause (Std.)": Number(e.pause || 0),
       "Std.": Number(e.hours || 0),
-      "Tätigkeit": e.activity || "",
+      "Tätigkeit": (e.activities || []).map((a) => `${a.desc}${a.hours !== "" && a.hours != null ? ` (${a.hours} h)` : ""}`).join("; "),
       Materialien: (e.materials || []).map((m) => `${m.name}${m.qty ? ` (${m.qty}${m.unit ? " " + m.unit : ""})` : ""}`).join(", "),
     }));
     const ws1 = XLSX.utils.json_to_sheet(rows);
@@ -1100,6 +1179,25 @@
         actionEl.closest("[data-material-id]").remove();
         break;
 
+      case "add-activity-row": {
+        const rowsContainer = actionEl.closest("[data-activities-block]").querySelector("[data-activity-rows]");
+        rowsContainer.insertAdjacentHTML("beforeend", activityRowHTML({}));
+        break;
+      }
+      case "remove-activity-row":
+        actionEl.closest("[data-activity-id]").remove();
+        break;
+      case "adjust-activity-hours": {
+        const row = actionEl.closest("[data-activity-id]");
+        const block = actionEl.closest("[data-activities-block]");
+        const hoursInput = row.querySelector('[data-field="ahours"]');
+        const total = findPersonTotalHours(block);
+        const delta = (total * Number(actionEl.dataset.delta)) / 100;
+        const next = Math.max(0, Math.round(((Number(hoursInput.value) || 0) + delta) * 100) / 100);
+        hoursInput.value = next;
+        break;
+      }
+
       case "toggle-add-panel":
         state.showAddPanel = true;
         render();
@@ -1141,9 +1239,9 @@
           err.textContent = "Bitte ein Projekt wählen.";
           return;
         }
-        const activity = card.querySelector('[data-field="finish-activity"]').value;
+        const activities = readActivityRows(card);
         const materials = readMaterialRows(card);
-        confirmFinishData(t, projectId, activity, materials);
+        confirmFinishData(t, projectId, activities, materials);
         render();
         break;
       }
@@ -1373,25 +1471,31 @@
     ensureOwnerTimer();
 
     if (supabaseEnabled) {
-      sb.auth.onAuthStateChange((_event, session) => {
-        currentUser = session ? session.user : null;
-      });
-      try {
-        const { data } = await sb.auth.getSession();
-        if (data && data.session) {
-          currentUser = data.session.user;
-          await loadFromCloud();
-          const createdOwner = ensureOwnerTimer();
-          if (createdOwner) await cloudInsertTimer(createdOwner);
-          subscribeRealtime();
-          showApp();
+      // onAuthStateChange fires immediately with the current session on subscribe,
+      // and again on every sign-in/sign-out — this alone drives the whole
+      // auth UI, so a fresh login also switches to the app without a manual reload.
+      sb.auth.onAuthStateChange(async (_event, session) => {
+        const user = session ? session.user : null;
+        const isNewLogin = user && (!currentUser || currentUser.id !== user.id);
+        currentUser = user;
+
+        if (user) {
+          try {
+            if (isNewLogin) {
+              await loadFromCloud();
+              const createdOwner = ensureOwnerTimer();
+              if (createdOwner) await cloudInsertTimer(createdOwner);
+              subscribeRealtime();
+            }
+            showApp();
+          } catch (e) {
+            console.warn("Supabase nicht erreichbar, starte im lokalen Modus:", e);
+            showApp();
+          }
         } else {
           showAuthGate();
         }
-      } catch (e) {
-        console.warn("Supabase nicht erreichbar, starte im lokalen Modus:", e);
-        showApp();
-      }
+      });
     } else {
       showApp();
     }
