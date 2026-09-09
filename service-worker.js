@@ -1,4 +1,4 @@
-const CACHE_NAME = "worktime-cache-v1";
+const CACHE_NAME = "worktime-cache-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -32,6 +32,20 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
+
+  // config.js holds user-editable Supabase credentials. Always try the network
+  // first so a change to this file takes effect immediately — never serve a
+  // stale cached copy. Cache is only used as an offline fallback.
+  if (url.origin === self.location.origin && url.pathname.endsWith("config.js")) {
+    event.respondWith(
+      fetch(req, { cache: "no-store" }).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+        return res;
+      }).catch(() => caches.match(req))
+    );
+    return;
+  }
 
   // Cross-origin (e.g. the SheetJS CDN, Google Fonts): try network, fall back to cache.
   if (url.origin !== self.location.origin) {
