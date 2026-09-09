@@ -293,6 +293,7 @@
     showEditForm: false,
     editingEntryId: null,
     showAddWorkerSettings: false,
+    overviewProjectId: null,
     deleteConfirmId: null,
     removeTimerConfirmId: null,
   };
@@ -834,42 +835,63 @@
 
   function renderOverviewView() {
     const root = document.getElementById("view-root");
-    let html = `
-      <div class="export-bar">
-        <button type="button" class="btn btn-primary" data-action="export-excel" ${state.entries.length === 0 ? "disabled" : ""}>${ICONS.download} Excel</button>
-        <button type="button" class="btn btn-secondary" data-action="export-pdf" ${state.entries.length === 0 ? "disabled" : ""}>${ICONS.printer} PDF</button>
-      </div>
-      <div id="print-area">
-        <h2 class="section-title">Projekt-Übersicht</h2>
-        <p class="hint">Gesamtstunden und Materialverbrauch je Projekt, nach Tag aufgeschlüsselt.</p>
-    `;
-    if (state.projects.length === 0) html += `<p class="empty-note">Noch keine Projekte angelegt.</p>`;
-    state.projects.forEach((p) => {
-      const { dates, rows } = buildProjectMaterialMatrix(p, state.entries);
-      const projectEntries = state.entries.filter((e) => e.projectId === p.id);
-      const totalHours = projectEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
-      const workerHoursMap = {};
-      projectEntries.forEach((e) => { workerHoursMap[e.worker] = (workerHoursMap[e.worker] || 0) + Number(e.hours || 0); });
-      const workerHours = Object.entries(workerHoursMap).sort((a, b) => b[1] - a[1]);
+    const selected = state.overviewProjectId && projectById(state.overviewProjectId) ? state.overviewProjectId : "";
+    if (state.overviewProjectId && !selected) state.overviewProjectId = ""; // selected project was deleted
 
-      html += `
-      <div class="overview-project">
-        <div class="overview-head">
-          <div class="overview-title"><span class="color-dot" style="background:${p.color}"></span>${esc(p.name)}</div>
-          <span class="overview-hours">Gesamt: <span class="num">${totalHours.toFixed(2)} h</span></span>
+    const projectOptions = state.projects.map((p) => `<option value="${p.id}" ${p.id === selected ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+
+    let html = `
+      <h2 class="section-title">Projekt-Übersicht</h2>
+      <p class="hint">Projekt wählen, um Stunden und Material für genau dieses Projekt zu sehen und zu exportieren.</p>
+      <div class="field-row">
+        <div class="field">
+          <label>Projekt</label>
+          <select id="overview-project-select">
+            <option value="">– Projekt wählen –</option>
+            ${projectOptions}
+          </select>
         </div>
-        ${p.description ? `<p class="overview-desc">${esc(p.description)}</p>` : ""}
-        <p class="small-label">STUNDEN JE MITARBEITER</p>
-        ${workerHours.length === 0
-          ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Noch keine Stunden erfasst.</p>`
-          : workerHours.map(([w, h]) => `<div class="today-row"><span>${esc(w)}</span><span class="num">${h.toFixed(2)} h</span></div>`).join("")}
-        <p class="small-label" style="margin-top:14px;">MATERIAL</p>
-        ${rows.length === 0
-          ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Kein Material erfasst.</p>`
-          : `<div style="overflow-x:auto;"><table><thead><tr><th>Material</th><th>Einh.</th>${dates.map((d) => `<th class="num">${fmtDate(d)}</th>`).join("")}<th>Gesamt</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td>${r.byDate.map((v) => `<td class="num">${v ? v : "–"}</td>`).join("")}<td class="num" style="font-weight:600;">${r.total}</td></tr>`).join("")}</tbody></table></div>`}
+      </div>
+      <div class="export-bar">
+        <button type="button" class="btn btn-primary" data-action="export-excel" ${!selected ? "disabled" : ""}>${ICONS.download} Excel</button>
+        <button type="button" class="btn btn-secondary" data-action="export-pdf" ${!selected ? "disabled" : ""}>${ICONS.printer} PDF</button>
+      </div>
+    `;
+
+    if (!selected) {
+      html += state.projects.length === 0
+        ? `<p class="empty-note">Noch keine Projekte angelegt.</p>`
+        : `<p class="empty-note">Bitte oben ein Projekt auswählen.</p>`;
+      root.innerHTML = html;
+      return;
+    }
+
+    const p = projectById(selected);
+    const { dates, rows } = buildProjectMaterialMatrix(p, state.entries);
+    const projectEntries = state.entries.filter((e) => e.projectId === p.id);
+    const totalHours = projectEntries.reduce((s, e) => s + Number(e.hours || 0), 0);
+    const workerHoursMap = {};
+    projectEntries.forEach((e) => { workerHoursMap[e.worker] = (workerHoursMap[e.worker] || 0) + Number(e.hours || 0); });
+    const workerHours = Object.entries(workerHoursMap).sort((a, b) => b[1] - a[1]);
+
+    html += `
+      <div id="print-area">
+        <div class="overview-project">
+          <div class="overview-head">
+            <div class="overview-title"><span class="color-dot" style="background:${p.color}"></span>${esc(p.name)}</div>
+            <span class="overview-hours">Gesamt: <span class="num">${totalHours.toFixed(2)} h</span></span>
+          </div>
+          ${p.description ? `<p class="overview-desc">${esc(p.description)}</p>` : ""}
+          <p class="small-label">STUNDEN JE MITARBEITER</p>
+          ${workerHours.length === 0
+            ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Noch keine Stunden erfasst.</p>`
+            : workerHours.map(([w, h]) => `<div class="today-row"><span>${esc(w)}</span><span class="num">${h.toFixed(2)} h</span></div>`).join("")}
+          <p class="small-label" style="margin-top:14px;">MATERIAL</p>
+          ${rows.length === 0
+            ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Kein Material erfasst.</p>`
+            : `<div style="overflow-x:auto;"><table><thead><tr><th>Material</th><th>Einh.</th>${dates.map((d) => `<th class="num">${fmtDate(d)}</th>`).join("")}<th>Gesamt</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td>${r.byDate.map((v) => `<td class="num">${v ? v : "–"}</td>`).join("")}<td class="num" style="font-weight:600;">${r.total}</td></tr>`).join("")}</tbody></table></div>`}
+        </div>
       </div>`;
-    });
-    html += `</div>`;
     root.innerHTML = html;
   }
 
@@ -959,12 +981,15 @@
   /* Excel export                                                     */
   /* ---------------------------------------------------------------- */
   function exportExcel() {
+    const p = projectById(state.overviewProjectId);
+    if (!p) return;
+
     const wb = XLSX.utils.book_new();
-    const rows = [...state.entries].sort((a, b) => a.date.localeCompare(b.date)).map((e) => ({
+    const projectEntries = [...state.entries].filter((e) => e.projectId === p.id).sort((a, b) => a.date.localeCompare(b.date));
+
+    const rows = projectEntries.map((e) => ({
       Datum: fmtDate(e.date),
       Mitarbeiter: e.worker,
-      "Kürzel": projectById(e.projectId)?.code || "",
-      Projekt: projectName(e.projectId),
       Start: e.start || "",
       Ende: e.end || "",
       "Pause (Std.)": Number(e.pause || 0),
@@ -975,32 +1000,32 @@
     const ws1 = XLSX.utils.json_to_sheet(rows);
     XLSX.utils.book_append_sheet(wb, ws1, "Zeiterfassung");
 
-    const projTotals = state.projects.map((p) => [
-      p.name, p.description || "",
-      Math.round(state.entries.filter((e) => e.projectId === p.id).reduce((s, e) => s + Number(e.hours || 0), 0) * 100) / 100,
-    ]);
-    const workerTotals = allNames().map((w) => [
-      w, Math.round(state.entries.filter((e) => e.worker === w).reduce((s, e) => s + Number(e.hours || 0), 0) * 100) / 100,
-    ]);
-    const aoa = [["Projekt", "Beschreibung", "Gesamtstunden"], ...projTotals, [], ["Mitarbeiter", "Gesamtstunden"], ...workerTotals];
+    const workerTotals = {};
+    projectEntries.forEach((e) => { workerTotals[e.worker] = (workerTotals[e.worker] || 0) + Number(e.hours || 0); });
+    const totalHours = Object.values(workerTotals).reduce((s, h) => s + h, 0);
+    const aoa = [
+      ["Projekt", p.name],
+      ["Kürzel", p.code || ""],
+      ["Beschreibung", p.description || ""],
+      ["Gesamtstunden", Math.round(totalHours * 100) / 100],
+      [],
+      ["Mitarbeiter", "Stunden"],
+      ...Object.entries(workerTotals).map(([w, h]) => [w, Math.round(h * 100) / 100]),
+    ];
     const ws2 = XLSX.utils.aoa_to_sheet(aoa);
     XLSX.utils.book_append_sheet(wb, ws2, "Übersicht");
 
-    const usedNames = new Set(["Zeiterfassung", "Übersicht"]);
-    state.projects.forEach((p) => {
-      const { dates, rows: matRows } = buildProjectMaterialMatrix(p, state.entries);
-      if (matRows.length === 0) return;
+    const { dates, rows: matRows } = buildProjectMaterialMatrix(p, state.entries);
+    if (matRows.length > 0) {
       const header = ["Material", "Einheit", ...dates.map(fmtDate), "Gesamt"];
       const body = matRows.map((r) => [r.name, r.unit, ...r.byDate.map((v) => (v ? v : "")), r.total]);
       const wsMat = XLSX.utils.aoa_to_sheet([header, ...body]);
-      let name = `Mat_${p.name}`.replace(/[:\\/?*[\]]/g, "").slice(0, 31);
-      let i = 2;
-      while (usedNames.has(name)) { name = `${name.slice(0, 28)}_${i}`; i++; }
-      usedNames.add(name);
-      XLSX.utils.book_append_sheet(wb, wsMat, name || `Material_${p.id.slice(0, 5)}`);
-    });
+      XLSX.utils.book_append_sheet(wb, wsMat, "Material");
+    }
 
-    XLSX.writeFile(wb, `WorkTime_${todayISO()}.xlsx`);
+    const safeName = (p.name || "Projekt").replace(/[:\\/?*[\]]/g, "").slice(0, 40);
+
+    XLSX.writeFile(wb, `WorkTime_${safeName}_${todayISO()}.xlsx`);
   }
 
   /* ---------------------------------------------------------------- */
@@ -1270,6 +1295,11 @@
     }
     if (t.matches('[data-role="extra-worker-select"]')) {
       refreshExtraWorkerOptions(t.closest("#manual-form"));
+      return;
+    }
+    if (t.id === "overview-project-select") {
+      state.overviewProjectId = t.value;
+      renderOverviewView();
       return;
     }
   });
