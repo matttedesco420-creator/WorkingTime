@@ -128,6 +128,8 @@ textarea { resize: vertical; min-height: 56px; }
 .status-label { font-size: 12.5px; font-weight: 600; letter-spacing: 0.02em; opacity: 0.85; }
 .remove-timer { margin-left: auto; color: inherit; opacity: 0.6; }
 .remove-timer:hover { opacity: 1; }
+.reset-timer { margin-left: auto; color: inherit; opacity: 0.6; }
+.reset-timer:hover { opacity: 1; }
 .worker-name { font-size: 14px; opacity: 0.9; margin: 0 0 2px 0; }
 .timer-digits { font-family: 'IBM Plex Mono', monospace; font-weight: 600; letter-spacing: 0.02em; margin: 4px 0 10px 0; }
 .timer-digits.big { font-size: 46px; }

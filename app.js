@@ -17,6 +17,7 @@
     download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
     printer: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1"/><path d="M6 17v4h12v-4"/></svg>',
     user: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>',
+    reset: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>',
   };
 
   /* ---------------------------------------------------------------- */
@@ -66,7 +67,7 @@
   });
 
   const STORAGE_KEY = "zeiterfassung-app-v1";
-  const APP_VERSION = "v1.4";
+  const APP_VERSION = "v1.5";
   const PALETTE = ["#2E6F63", "#B8562F", "#3D5A80", "#7A5C3E", "#6B7A3D", "#8C4B6B", "#4B7A8C", "#A0522D"];
 
   /* ---------------------------------------------------------------- */
@@ -322,6 +323,7 @@
     overviewProjectId: null,
     deleteConfirmId: null,
     removeTimerConfirmId: null,
+    resetTimerConfirmId: null,
   };
 
   function load() {
@@ -419,6 +421,16 @@
     if (!t) return;
     t.status = "running";
     t.startedAt = Date.now();
+    cloudUpdateTimer(t);
+  }
+  function resetTimer(id) {
+    const t = state.timers.find((x) => x.id === id);
+    if (!t) return;
+    t.status = "idle";
+    t.startedAt = null;
+    t.accumulatedMs = 0;
+    t.sessionDate = null;
+    t.sessionStartClock = null;
     cloudUpdateTimer(t);
   }
   function clickFeierabend(id) {
@@ -730,6 +742,9 @@
       </div>`;
     }
 
+    const resetBtn = (t.status === "running" || t.status === "paused")
+      ? `<button type="button" class="btn-icon reset-timer" data-action="request-reset-timer" data-timer-id="${t.id}" title="Zeit zurücksetzen">${ICONS.reset}</button>`
+      : "";
     const removeBtn = !t.isOwner
       ? `<button type="button" class="btn-icon remove-timer" data-action="request-remove-timer" data-timer-id="${t.id}" title="Entfernen">${ICONS.x}</button>`
       : "";
@@ -737,6 +752,11 @@
       ? `<div class="inline-confirm"><span>Ohne Speichern entfernen?</span>
           <button type="button" class="link-btn" data-action="confirm-remove-timer" data-timer-id="${t.id}">Ja</button>
           <button type="button" class="link-btn" data-action="cancel-remove-timer">Abbrechen</button>
+        </div>`
+      : state.resetTimerConfirmId === t.id
+      ? `<div class="inline-confirm"><span>Zeit auf 00:00:00 zurücksetzen?</span>
+          <button type="button" class="link-btn" data-action="confirm-reset-timer" data-timer-id="${t.id}">Ja</button>
+          <button type="button" class="link-btn" data-action="cancel-reset-timer">Abbrechen</button>
         </div>`
       : "";
     const nameLine = big ? `<p class="worker-name">${esc(displayName)}${roleLabel ? ` · ${esc(roleLabel)}` : ""}</p>` : "";
@@ -757,6 +777,7 @@
       <div class="timer-top">
         <span class="status-dot ${statusClassMap[t.status]}"></span>
         <span class="status-label">${statusLabelMap[t.status]}${!big ? ` · ${esc(displayName)}` : ""}</span>
+        ${resetBtn}
         ${removeBtn}
       </div>
       ${confirmRow}
@@ -1180,6 +1201,7 @@
       state.showAddPanel = false;
       state.deleteConfirmId = null;
       state.removeTimerConfirmId = null;
+      state.resetTimerConfirmId = null;
       render();
       return;
     }
@@ -1305,6 +1327,22 @@
       }
       case "cancel-remove-timer":
         state.removeTimerConfirmId = null;
+        render();
+        break;
+
+      case "request-reset-timer":
+        state.resetTimerConfirmId = actionEl.dataset.timerId;
+        render();
+        break;
+      case "confirm-reset-timer": {
+        const tid = actionEl.dataset.timerId;
+        resetTimer(tid);
+        state.resetTimerConfirmId = null;
+        render();
+        break;
+      }
+      case "cancel-reset-timer":
+        state.resetTimerConfirmId = null;
         render();
         break;
 
