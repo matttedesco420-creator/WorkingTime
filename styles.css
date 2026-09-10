@@ -53,6 +53,7 @@ body {
 .hint.warn { color: var(--danger); }
 .hint.ok { color: var(--status-running); }
 .account-row { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-top: 1px solid var(--line); margin-top: 12px; }
+.app-version { color: #A9B3AC; font-size: 11.5px; margin: 10px 0 0 0; text-align: right; }
 
 /* ---- app shell ---- */
 .app-shell { min-height: 100vh; padding-bottom: calc(78px + env(safe-area-inset-bottom, 0px)); }
@@ -142,6 +143,9 @@ textarea { resize: vertical; min-height: 56px; }
 
 .today-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
 .today-row:last-child { border-bottom: none; }
+.daily-person-name { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px; margin: 14px 0 2px 0; }
+.daily-person-total { font-weight: 600; border-bottom: none; border-top: 1px solid var(--line); }
+.daily-grand-total { font-weight: 700; font-size: 14.5px; border-top: 2px solid var(--ink); margin-top: 6px; }
 
 /* ---- pills ---- */
 .pill { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; }

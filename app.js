@@ -66,6 +66,7 @@
   });
 
   const STORAGE_KEY = "zeiterfassung-app-v1";
+  const APP_VERSION = "v1.4";
   const PALETTE = ["#2E6F63", "#B8562F", "#3D5A80", "#7A5C3E", "#6B7A3D", "#8C4B6B", "#4B7A8C", "#A0522D"];
 
   /* ---------------------------------------------------------------- */
@@ -279,27 +280,27 @@
     return { dates, rows };
   }
 
-  // Hours worked per person, broken down by day — used for the "Arbeitszeit pro
-  // Tag" table on the overview page (and therefore also in the PDF export).
-  function buildProjectHoursMatrix(project, entries) {
+  // Hours worked per person, broken down by day — vertical, person-grouped
+  // layout (owner first, then workers) so it stays readable in the PDF export
+  // even with many dates, instead of a wide day-by-day table.
+  function buildProjectDailyBreakdown(project, entries) {
     const projEntries = entries.filter((e) => e.projectId === project.id);
-    const dateSet = new Set();
-    const peopleSet = new Set();
-    projEntries.forEach((e) => { dateSet.add(e.date); peopleSet.add(e.worker); });
-    const dates = Array.from(dateSet).sort();
-    const people = Array.from(peopleSet).sort();
-    const rows = people.map((person) => {
-      let total = 0;
-      const byDate = dates.map((d) => {
-        const sum = projEntries.filter((e) => e.date === d && e.worker === person).reduce((s, e) => s + Number(e.hours || 0), 0);
-        total += sum;
-        return Math.round(sum * 100) / 100;
+    const owner = ownerDisplayName();
+    const peopleSet = new Set(projEntries.map((e) => e.worker));
+    const rest = Array.from(peopleSet).filter((p) => p !== owner).sort();
+    const people = peopleSet.has(owner) ? [owner, ...rest] : rest;
+
+    const sections = people.map((person) => {
+      const byDate = {};
+      projEntries.filter((e) => e.worker === person).forEach((e) => {
+        byDate[e.date] = (byDate[e.date] || 0) + Number(e.hours || 0);
       });
-      return { person, byDate, total: Math.round(total * 100) / 100 };
+      const days = Object.keys(byDate).sort().map((d) => ({ date: d, hours: Math.round(byDate[d] * 100) / 100 }));
+      const total = Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100;
+      return { person, days, total };
     });
-    const dayTotals = dates.map((d, i) => Math.round(rows.reduce((s, r) => s + r.byDate[i], 0) * 100) / 100);
-    const grandTotal = Math.round(rows.reduce((s, r) => s + r.total, 0) * 100) / 100;
-    return { dates, rows, dayTotals, grandTotal };
+    const grandTotal = Math.round(sections.reduce((s, sec) => s + sec.total, 0) * 100) / 100;
+    return { sections, grandTotal };
   }
 
   /* ---------------------------------------------------------------- */
@@ -498,6 +499,18 @@
     if (hoursInput) return Number(hoursInput.value) || 0;
     const totalAttr = personBlock.getAttribute("data-total-hours");
     return totalAttr ? Number(totalAttr) || 0 : 0;
+  }
+  // How many hours are still free to assign to activities in this block, i.e.
+  // the person's total work time minus what other activity rows already use.
+  function remainingActivityAllowance(activitiesBlock, excludeRow) {
+    const total = findPersonTotalHours(activitiesBlock);
+    const others = Array.from(activitiesBlock.querySelectorAll("[data-activity-id]"))
+      .filter((r) => r !== excludeRow)
+      .reduce((s, r) => s + (Number(r.querySelector('[data-field="ahours"]').value) || 0), 0);
+    return Math.max(0, Math.round((total - others) * 100) / 100);
+  }
+  function activityHoursSum(activities) {
+    return Math.round(activities.reduce((s, a) => s + (Number(a.hours) || 0), 0) * 100) / 100;
   }
   function recalcTimeFields(block) {
     const start = block.querySelector('[data-field="start"]').value;
@@ -786,6 +799,7 @@
         <button type="button" class="btn btn-primary" data-action="save-profile">${ICONS.check} Fertig</button>
       </div>
       ${accountBlock}
+      <p class="app-version">WorkTime ${APP_VERSION}</p>
     </div>`;
   }
   function renderNav() {
@@ -942,8 +956,16 @@
 
     const p = projectById(selected);
     const { dates, rows } = buildProjectMaterialMatrix(p, state.entries);
-    const hoursMatrix = buildProjectHoursMatrix(p, state.entries);
-    const totalHours = hoursMatrix.grandTotal;
+    const daily = buildProjectDailyBreakdown(p, state.entries);
+    const totalHours = daily.grandTotal;
+
+    const dailyHtml = daily.sections.length === 0
+      ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Noch keine Stunden erfasst.</p>`
+      : daily.sections.map((sec) => `
+          <p class="daily-person-name">${esc(sec.person)}</p>
+          ${sec.days.map((d) => `<div class="today-row"><span>${fmtDate(d.date)}</span><span class="num">${d.hours} h</span></div>`).join("")}
+          <div class="today-row daily-person-total"><span>Gesamt ${esc(sec.person)}</span><span class="num">${sec.total} h</span></div>
+        `).join("") + `<div class="today-row daily-grand-total"><span>Gesamt</span><span class="num">${daily.grandTotal} h</span></div>`;
 
     html += `
       <div id="print-area">
@@ -954,9 +976,7 @@
           </div>
           ${p.description ? `<p class="overview-desc">${esc(p.description)}</p>` : ""}
           <p class="small-label">ARBEITSZEIT PRO TAG</p>
-          ${hoursMatrix.rows.length === 0
-            ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Noch keine Stunden erfasst.</p>`
-            : `<div style="overflow-x:auto;"><table><thead><tr><th>Mitarbeiter</th>${hoursMatrix.dates.map((d) => `<th class="num">${fmtDate(d)}</th>`).join("")}<th>Gesamt</th></tr></thead><tbody>${hoursMatrix.rows.map((r) => `<tr><td>${esc(r.person)}</td>${r.byDate.map((v) => `<td class="num">${v ? v : "–"}</td>`).join("")}<td class="num" style="font-weight:600;">${r.total}</td></tr>`).join("")}<tr><td style="font-weight:700;">Gesamt</td>${hoursMatrix.dayTotals.map((v) => `<td class="num" style="font-weight:600;">${v ? v : "–"}</td>`).join("")}<td class="num" style="font-weight:700;">${hoursMatrix.grandTotal}</td></tr></tbody></table></div>`}
+          ${dailyHtml}
           <p class="small-label" style="margin-top:14px;">MATERIAL</p>
           ${rows.length === 0
             ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Kein Material erfasst.</p>`
@@ -999,23 +1019,38 @@
     const ownerBlock = form.querySelector("[data-owner-time]");
     const owner = readTimeFieldsRaw(ownerBlock);
     const ownerActivities = readActivityRows(ownerBlock);
+    const ownerHours = Number(owner.hours) || 0;
+    if (activityHoursSum(ownerActivities) > ownerHours + 0.001) {
+      errorEl.textContent = `Die Tätigkeitsstunden übersteigen deine Gesamtarbeitszeit (${ownerHours} h).`;
+      return;
+    }
+
+    const pendingExtras = [];
+    for (const block of form.querySelectorAll("[data-extra-id]")) {
+      const worker = block.querySelector('[data-role="extra-worker-select"]').value;
+      if (!worker) continue;
+      const tf = readTimeFieldsRaw(block);
+      if (!tf.start && !tf.end && !tf.hours) continue;
+      const workerActivities = readActivityRows(block);
+      const workerHours = Number(tf.hours) || 0;
+      if (activityHoursSum(workerActivities) > workerHours + 0.001) {
+        errorEl.textContent = `Die Tätigkeitsstunden übersteigen die Gesamtarbeitszeit von ${worker} (${workerHours} h).`;
+        return;
+      }
+      pendingExtras.push({ worker, tf, workerActivities });
+    }
 
     const newEntries = [];
     let materialsAssigned = false; // material is only ever attributed once (to the owner if possible)
     if (owner.start || owner.end || owner.hours) {
       newEntries.push({
         id: uid(), date, projectId, worker: ownerDisplayName(),
-        start: owner.start, end: owner.end, pause: Number(owner.pause) || 0, hours: Number(owner.hours) || 0,
+        start: owner.start, end: owner.end, pause: Number(owner.pause) || 0, hours: ownerHours,
         activities: ownerActivities, materials: cloneMaterials(materials),
       });
       materialsAssigned = true;
     }
-    form.querySelectorAll("[data-extra-id]").forEach((block) => {
-      const worker = block.querySelector('[data-role="extra-worker-select"]').value;
-      if (!worker) return;
-      const tf = readTimeFieldsRaw(block);
-      if (!tf.start && !tf.end && !tf.hours) return;
-      const workerActivities = readActivityRows(block);
+    pendingExtras.forEach(({ worker, tf, workerActivities }) => {
       const giveMaterial = !materialsAssigned; // fallback: if there's no owner entry, the first worker entry gets it
       newEntries.push({
         id: uid(), date, projectId, worker,
@@ -1042,11 +1077,16 @@
     const personBlock = form.querySelector("[data-person-block]");
     const tf = readTimeFieldsRaw(personBlock);
     const activities = readActivityRows(personBlock);
+    const entryHours = Number(tf.hours) || 0;
+    if (activityHoursSum(activities) > entryHours + 0.001) {
+      errorEl.textContent = `Die Tätigkeitsstunden übersteigen die Gesamtarbeitszeit (${entryHours} h).`;
+      return;
+    }
     const materials = readMaterialRows(form.querySelector("[data-materials-block]"));
     const entry = state.entries.find((e) => e.id === state.editingEntryId);
     if (!entry) return;
     entry.date = date; entry.projectId = projectId; entry.worker = worker;
-    entry.start = tf.start; entry.end = tf.end; entry.pause = Number(tf.pause) || 0; entry.hours = Number(tf.hours) || 0;
+    entry.start = tf.start; entry.end = tf.end; entry.pause = Number(tf.pause) || 0; entry.hours = entryHours;
     entry.activities = activities; entry.materials = materials;
     delete entry.activity; // migrate away from the old single-string field
 
@@ -1192,8 +1232,9 @@
         const block = actionEl.closest("[data-activities-block]");
         const hoursInput = row.querySelector('[data-field="ahours"]');
         const total = findPersonTotalHours(block);
+        const maxAllowed = remainingActivityAllowance(block, row);
         const delta = (total * Number(actionEl.dataset.delta)) / 100;
-        const next = Math.max(0, Math.round(((Number(hoursInput.value) || 0) + delta) * 100) / 100);
+        const next = Math.min(maxAllowed, Math.max(0, Math.round(((Number(hoursInput.value) || 0) + delta) * 100) / 100));
         hoursInput.value = next;
         break;
       }
@@ -1229,17 +1270,22 @@
         const card = actionEl.closest("[data-timer-card]");
         const projSel = card.querySelector('[data-field="finish-project"]');
         const projectId = projSel ? projSel.value : "";
-        if (!projectId) {
+        const showFinishError = (msg) => {
           let err = card.querySelector(".error-msg");
           if (!err) {
             err = document.createElement("p");
             err.className = "error-msg";
             actionEl.closest(".field-row").insertAdjacentElement("beforebegin", err);
           }
-          err.textContent = "Bitte ein Projekt wählen.";
+          err.textContent = msg;
+        };
+        if (!projectId) { showFinishError("Bitte ein Projekt wählen."); return; }
+        const activities = readActivityRows(card);
+        const totalHours = Math.round((t.accumulatedMs / 3600000) * 100) / 100;
+        if (activityHoursSum(activities) > totalHours + 0.001) {
+          showFinishError(`Die Tätigkeitsstunden übersteigen die erfasste Arbeitszeit (${totalHours} h).`);
           return;
         }
-        const activities = readActivityRows(card);
         const materials = readMaterialRows(card);
         confirmFinishData(t, projectId, activities, materials);
         render();
@@ -1393,6 +1439,13 @@
     }
     if (t.matches('[data-role="extra-worker-select"]')) {
       refreshExtraWorkerOptions(t.closest("#manual-form"));
+      return;
+    }
+    if (t.matches('[data-field="ahours"]')) {
+      const row = t.closest("[data-activity-id]");
+      const block = t.closest("[data-activities-block]");
+      const maxAllowed = remainingActivityAllowance(block, row);
+      if ((Number(t.value) || 0) > maxAllowed) t.value = maxAllowed;
       return;
     }
     if (t.id === "overview-project-select") {
