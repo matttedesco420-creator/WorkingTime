@@ -1,4 +1,4 @@
-const CACHE_NAME = "worktime-cache-v2";
+const CACHE_NAME = "worktime-cache-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -27,47 +27,21 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// This app changes frequently during development, so every same-origin file
+// (HTML, CSS, JS, manifest, config) is fetched network-first — the cache is
+// only ever used as a fallback when there's no network at all. This avoids
+// an entire class of "I updated the code but the browser still shows the
+// old version" bugs; the small delay from skipping cache-first is
+// unnoticeable for files this size.
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
 
-  const url = new URL(req.url);
-
-  // config.js holds user-editable Supabase credentials. Always try the network
-  // first so a change to this file takes effect immediately — never serve a
-  // stale cached copy. Cache is only used as an offline fallback.
-  if (url.origin === self.location.origin && url.pathname.endsWith("config.js")) {
-    event.respondWith(
-      fetch(req, { cache: "no-store" }).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-        return res;
-      }).catch(() => caches.match(req))
-    );
-    return;
-  }
-
-  // Cross-origin (e.g. the SheetJS CDN, Google Fonts): try network, fall back to cache.
-  if (url.origin !== self.location.origin) {
-    event.respondWith(
-      fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-        return res;
-      }).catch(() => caches.match(req))
-    );
-    return;
-  }
-
-  // Same-origin app shell: cache-first, refresh cache in the background.
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const fetchPromise = fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-        return res;
-      }).catch(() => cached);
-      return cached || fetchPromise;
-    })
+    fetch(req, { cache: "no-store" }).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+      return res;
+    }).catch(() => caches.match(req))
   );
 });
