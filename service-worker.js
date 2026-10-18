@@ -1,10 +1,12 @@
-const CACHE_NAME = "worktime-cache-v3";
+const CACHE_NAME = "worktime-cache-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./manifest.json",
+  "./lib/xlsx.full.min.js",
+  "./lib/jspdf.umd.min.js",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/favicon.png",

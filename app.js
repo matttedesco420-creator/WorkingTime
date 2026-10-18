@@ -67,17 +67,23 @@
   });
 
   const STORAGE_KEY = "zeiterfassung-app-v1";
-  const APP_VERSION = "v1.5";
+  let deferredInstallPrompt = null;
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    if (typeof render === "function" && state && state.showProfilePanel) render();
+  });
+  window.addEventListener("appinstalled", () => { deferredInstallPrompt = null; });
+  const APP_VERSION = "v2.0";
   const PALETTE = ["#2E6F63", "#B8562F", "#3D5A80", "#7A5C3E", "#6B7A3D", "#8C4B6B", "#4B7A8C", "#A0522D"];
 
   /* ---------------------------------------------------------------- */
   /* Supabase (optional cloud sync — only active if config.js has     */
   /* real credentials; otherwise the app stays fully local as before) */
   /* ---------------------------------------------------------------- */
-  const SUPABASE_URL = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_URL) || "";
-  const SUPABASE_ANON_KEY = (window.APP_CONFIG && window.APP_CONFIG.SUPABASE_ANON_KEY) || "";
-  const supabaseEnabled = !!(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase);
-  const sb = supabaseEnabled ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+  // Cloud-Anbindung ist abgeschaltet: alle Daten bleiben auf diesem Gerät.
+  const supabaseEnabled = false;
+  const sb = null;
   let currentUser = null;
   let realtimeChannel = null;
 
@@ -237,15 +243,8 @@
     realtimeChannel.subscribe();
   }
 
-  function showAuthGate() {
-    document.getElementById("boot-screen").style.display = "none";
-    document.getElementById("auth-gate").style.display = "flex";
-    document.getElementById("app-shell").style.display = "none";
-    document.getElementById("bottom-nav").style.display = "none";
-  }
   function showApp() {
     document.getElementById("boot-screen").style.display = "none";
-    document.getElementById("auth-gate").style.display = "none";
     document.getElementById("app-shell").style.display = "";
     document.getElementById("bottom-nav").style.display = "";
     render();
@@ -281,6 +280,29 @@
     return { dates, rows };
   }
 
+  // Materials of one project, listed vertically: material -> one row per day -> total.
+  function buildProjectMaterialDailyBreakdown(project, entries) {
+    const projEntries = entries.filter((e) => e.projectId === project.id);
+    const map = new Map();
+    projEntries.forEach((e) => {
+      (e.materials || []).forEach((m) => {
+        if (!m.name || !m.name.trim()) return;
+        const key = m.name.trim().toLowerCase();
+        if (!map.has(key)) map.set(key, { name: m.name.trim(), unit: m.unit || "", byDate: {} });
+        const item = map.get(key);
+        if (!item.unit && m.unit) item.unit = m.unit;
+        item.byDate[e.date] = (item.byDate[e.date] || 0) + (Number(m.qty) || 0);
+      });
+    });
+    return Array.from(map.values())
+      .map((item) => {
+        const days = Object.keys(item.byDate).sort().map((d) => ({ date: d, qty: Math.round(item.byDate[d] * 100) / 100 }));
+        const total = Math.round(days.reduce((sum, d) => sum + d.qty, 0) * 100) / 100;
+        return { name: item.name, unit: item.unit, days, total };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "de"));
+  }
+
   // Hours worked per person, broken down by day — vertical, person-grouped
   // layout (owner first, then workers) so it stays readable in the PDF export
   // even with many dates, instead of a wide day-by-day table.
@@ -293,10 +315,21 @@
 
     const sections = people.map((person) => {
       const byDate = {};
+      const activitiesByDate = {};
       projEntries.filter((e) => e.worker === person).forEach((e) => {
         byDate[e.date] = (byDate[e.date] || 0) + Number(e.hours || 0);
+        (e.activities || []).forEach((a) => {
+          const desc = (a.desc || "").trim();
+          if (!desc) return;
+          const list = activitiesByDate[e.date] || (activitiesByDate[e.date] = []);
+          if (!list.includes(desc)) list.push(desc);
+        });
       });
-      const days = Object.keys(byDate).sort().map((d) => ({ date: d, hours: Math.round(byDate[d] * 100) / 100 }));
+      const days = Object.keys(byDate).sort().map((d) => ({
+        date: d,
+        hours: Math.round(byDate[d] * 100) / 100,
+        activities: (activitiesByDate[d] || []).join(", "),
+      }));
       const total = Math.round(days.reduce((s, d) => s + d.hours, 0) * 100) / 100;
       return { person, days, total };
     });
@@ -806,6 +839,16 @@
            <button type="button" class="btn btn-ghost" data-action="logout" style="margin-top:6px; align-self:flex-start;">Abmelden</button>
          </div>`
       : "";
+    const isStandalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+    const installBlock = isStandalone ? "" : deferredInstallPrompt
+      ? `<div class="account-row">
+           <span class="small-label">APP</span>
+           <button type="button" class="btn btn-secondary" data-action="install-app" style="align-self:flex-start;">${ICONS.download} App installieren</button>
+         </div>`
+      : `<div class="account-row">
+           <span class="small-label">APP</span>
+           <span class="hint" style="margin:0;">Installieren: Chrome-Menü (⋮) → „App installieren" bzw. „Zum Startbildschirm".</span>
+         </div>`;
     slot.innerHTML = `
     <div class="add-panel" id="profile-panel">
       <p class="small-label">PROFIL</p>
@@ -819,6 +862,7 @@
       <div class="field-row" style="margin-top:12px; margin-bottom:0;">
         <button type="button" class="btn btn-primary" data-action="save-profile">${ICONS.check} Fertig</button>
       </div>
+      ${installBlock}
       ${accountBlock}
       <p class="app-version">WorkTime ${APP_VERSION}</p>
     </div>`;
@@ -965,6 +1009,11 @@
         <button type="button" class="btn btn-primary" data-action="export-excel" ${!selected ? "disabled" : ""}>${ICONS.download} Excel</button>
         <button type="button" class="btn btn-secondary" data-action="export-pdf" ${!selected ? "disabled" : ""}>${ICONS.printer} PDF</button>
       </div>
+      <div class="mail-row">
+        <input type="email" data-field="pdfEmail" placeholder="E-Mail-Adresse für PDF" value="${esc(getSavedMail())}" autocomplete="email" ${!selected ? "disabled" : ""}>
+        <button type="button" class="btn btn-secondary" data-action="send-pdf-mail" ${!selected ? "disabled" : ""}>Per E-Mail</button>
+      </div>
+      <p class="hint warn" data-mail-msg style="display:none;"></p>
     `;
 
     if (!selected) {
@@ -976,7 +1025,7 @@
     }
 
     const p = projectById(selected);
-    const { dates, rows } = buildProjectMaterialMatrix(p, state.entries);
+    const materialDaily = buildProjectMaterialDailyBreakdown(p, state.entries);
     const daily = buildProjectDailyBreakdown(p, state.entries);
     const totalHours = daily.grandTotal;
 
@@ -984,7 +1033,7 @@
       ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Noch keine Stunden erfasst.</p>`
       : daily.sections.map((sec) => `
           <p class="daily-person-name">${esc(sec.person)}</p>
-          ${sec.days.map((d) => `<div class="today-row"><span>${fmtDate(d.date)}</span><span class="num">${d.hours} h</span></div>`).join("")}
+          ${sec.days.map((d) => `<div class="today-row"><span>${fmtDate(d.date)}${d.activities ? `<span class="day-activities"> · ${esc(d.activities)}</span>` : ""}</span><span class="num">${d.hours} h</span></div>`).join("")}
           <div class="today-row daily-person-total"><span>Gesamt ${esc(sec.person)}</span><span class="num">${sec.total} h</span></div>
         `).join("") + `<div class="today-row daily-grand-total"><span>Gesamt</span><span class="num">${daily.grandTotal} h</span></div>`;
 
@@ -999,9 +1048,13 @@
           <p class="small-label">ARBEITSZEIT PRO TAG</p>
           ${dailyHtml}
           <p class="small-label" style="margin-top:14px;">MATERIAL</p>
-          ${rows.length === 0
+          ${materialDaily.length === 0
             ? `<p class="empty-note" style="padding:6px 0; margin-top:0;">Kein Material erfasst.</p>`
-            : `<div style="overflow-x:auto;"><table><thead><tr><th>Material</th><th>Einh.</th>${dates.map((d) => `<th class="num">${fmtDate(d)}</th>`).join("")}<th>Gesamt</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.unit)}</td>${r.byDate.map((v) => `<td class="num">${v ? v : "–"}</td>`).join("")}<td class="num" style="font-weight:600;">${r.total}</td></tr>`).join("")}</tbody></table></div>`}
+            : materialDaily.map((m) => `
+              <p class="daily-person-name">${esc(m.name)}${m.unit ? `<span class="day-activities"> (${esc(m.unit)})</span>` : ""}</p>
+              ${m.days.map((d) => `<div class="today-row"><span>${fmtDate(d.date)}</span><span class="num">${d.qty}${m.unit ? " " + esc(m.unit) : ""}</span></div>`).join("")}
+              <div class="today-row daily-person-total"><span>Gesamt</span><span class="num">${m.total}${m.unit ? " " + esc(m.unit) : ""}</span></div>
+            `).join("")}
         </div>
       </div>`;
     root.innerHTML = html;
@@ -1115,6 +1168,155 @@
     state.editingEntryId = null;
     render();
     cloudUpdateEntry(entry);
+  }
+
+
+  /* ---------------------------------------------------------------- */
+  /* PDF (als echte Datei erzeugt, mit jsPDF)                         */
+  /* ---------------------------------------------------------------- */
+  function pdfFileName(p) {
+    const safe = (p.name || "Projekt").replace(/[^\wäöüÄÖÜß-]+/g, "_");
+    return `WorkTime_${safe}_${todayISO()}.pdf`;
+  }
+  function buildPdfDoc(p) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const daily = buildProjectDailyBreakdown(p, state.entries);
+    const materialDaily = buildProjectMaterialDailyBreakdown(p, state.entries);
+    const L = 15, R = 195, BOTTOM = 280;
+    const DARK = [38, 63, 60], GREY = [138, 148, 141], BLACK = [30, 30, 30], LINE = [215, 220, 215];
+    let y = 20;
+    const need = (h) => { if (y + h > BOTTOM) { doc.addPage(); y = 20; } };
+    const setFont = (style, size, color) => { doc.setFont("helvetica", style); doc.setFontSize(size); doc.setTextColor(...color); };
+    const rule = () => { doc.setDrawColor(...LINE); doc.setLineWidth(0.2); doc.line(L, y - 3.4, R, y - 3.4); };
+
+    setFont("bold", 17, DARK);
+    doc.text(p.name || "Projekt", L, y);
+    setFont("bold", 11, DARK);
+    doc.text(`Gesamt: ${daily.grandTotal.toFixed(2)} h`, R, y, { align: "right" });
+    y += 6;
+    setFont("normal", 9, GREY);
+    doc.text(`Erstellt am ${fmtDate(todayISO())} · WorkTime ${APP_VERSION}`, L, y);
+    y += 6;
+    if (p.description) {
+      setFont("normal", 10, BLACK);
+      const lines = doc.splitTextToSize(p.description, R - L);
+      doc.text(lines, L, y);
+      y += lines.length * 4.6 + 2;
+    }
+    y += 4;
+
+    const section = (title) => { need(16); setFont("bold", 8.5, GREY); doc.text(title, L, y); y += 6; };
+    // one "label ... value" row; optional grey note directly after the label
+    const row = (label, value, note, bold) => {
+      const valueW = 28;
+      setFont(bold ? "bold" : "normal", 10, BLACK);
+      const labelW = doc.getTextWidth(label);
+      let noteLines = [];
+      if (note) {
+        setFont("normal", 8.5, GREY);
+        noteLines = doc.splitTextToSize(" · " + note, R - L - labelW - valueW);
+      }
+      const h = Math.max(1, noteLines.length) * 4.3 + 1.6;
+      need(h);
+      setFont(bold ? "bold" : "normal", 10, BLACK);
+      doc.text(label, L, y);
+      doc.text(value, R, y, { align: "right" });
+      if (noteLines.length) {
+        setFont("normal", 8.5, GREY);
+        doc.text(noteLines[0], L + labelW, y);
+        for (let i = 1; i < noteLines.length; i++) doc.text(noteLines[i].trim(), L + labelW + doc.getTextWidth(" · "), y + i * 4.3);
+      }
+      y += h;
+      if (!bold) rule();
+    };
+    const heading = (text, extra) => {
+      need(16);
+      setFont("bold", 11.5, DARK);
+      doc.text(text, L, y);
+      if (extra) { const w = doc.getTextWidth(text); setFont("normal", 9, GREY); doc.text(extra, L + w + 2, y); }
+      y += 6;
+    };
+
+    section("ARBEITSZEIT PRO TAG");
+    if (daily.sections.length === 0) { setFont("normal", 10, GREY); doc.text("Noch keine Stunden erfasst.", L, y); y += 8; }
+    daily.sections.forEach((sec) => {
+      heading(sec.person);
+      sec.days.forEach((d) => row(fmtDate(d.date), `${d.hours} h`, d.activities, false));
+      row(`Gesamt ${sec.person}`, `${sec.total} h`, "", true);
+      y += 5;
+    });
+    if (daily.sections.length) { row("Gesamt", `${daily.grandTotal} h`, "", true); y += 6; }
+
+    section("MATERIAL");
+    if (materialDaily.length === 0) { setFont("normal", 10, GREY); doc.text("Kein Material erfasst.", L, y); y += 8; }
+    materialDaily.forEach((m) => {
+      heading(m.name, m.unit ? `(${m.unit})` : "");
+      m.days.forEach((d) => row(fmtDate(d.date), `${d.qty}${m.unit ? " " + m.unit : ""}`, "", false));
+      row("Gesamt", `${m.total}${m.unit ? " " + m.unit : ""}`, "", true);
+      y += 5;
+    });
+
+    const pages = doc.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i);
+      setFont("normal", 8, GREY);
+      doc.text(`WorkTime · Seite ${i} von ${pages}`, 105, 290, { align: "center" });
+    }
+    return doc;
+  }
+  function triggerDownload(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  function exportPdf() {
+    const p = projectById(state.overviewProjectId);
+    if (!p) return;
+    if (!window.jspdf) { alert("PDF-Bibliothek nicht geladen."); return; }
+    buildPdfDoc(p).save(pdfFileName(p));
+  }
+  const MAIL_KEY = "worktime-pdf-email";
+  function getSavedMail() { try { return localStorage.getItem(MAIL_KEY) || ""; } catch (e) { return ""; } }
+  function setMailMessage(text, ok) {
+    const el = document.querySelector("[data-mail-msg]");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "hint " + (ok ? "ok" : "warn");
+    el.style.display = text ? "block" : "none";
+  }
+  async function sendPdfByMail() {
+    const p = projectById(state.overviewProjectId);
+    if (!p) return;
+    const input = document.querySelector('[data-field="pdfEmail"]');
+    const email = (input ? input.value : "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) { setMailMessage("Bitte eine gültige E-Mail-Adresse eingeben.", false); return; }
+    try { localStorage.setItem(MAIL_KEY, email); } catch (e) { /* ignore */ }
+    if (!window.jspdf) { setMailMessage("PDF-Bibliothek nicht geladen.", false); return; }
+
+    const name = pdfFileName(p);
+    const blob = buildPdfDoc(p).output("blob");
+    const file = new File([blob], name, { type: "application/pdf" });
+    const subject = `Arbeitszeit & Material – ${p.name}`;
+    const body = `Im Anhang: ${p.name} (Stand ${fmtDate(todayISO())}).`;
+
+    // 1) Share sheet with the PDF attached (Android: pick Gmail/Outlook, PDF is attached automatically)
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        try { await navigator.clipboard.writeText(email); } catch (e) { /* ignore */ }
+        await navigator.share({ files: [file], title: subject, text: body });
+        setMailMessage(`Geteilt. Die Adresse ${email} liegt in der Zwischenablage (im E-Mail-Programm bei „An" einfügen).`, true);
+      } catch (e) {
+        if (e && e.name !== "AbortError") setMailMessage("Teilen fehlgeschlagen: " + (e.message || e), false);
+      }
+      return;
+    }
+    // 2) Fallback: download the PDF and open the mail app with the address prefilled (attach the file manually)
+    triggerDownload(blob, name);
+    window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body + "\n\n(PDF bitte aus den Downloads anhängen: " + name + ")")}`;
+    setMailMessage("PDF wurde heruntergeladen – bitte in der E-Mail anhängen.", true);
   }
 
   /* ---------------------------------------------------------------- */
@@ -1447,8 +1649,17 @@
       }
 
       case "export-excel": exportExcel(); break;
-      case "export-pdf": window.print(); break;
+      case "export-pdf": exportPdf(); break;
+      case "send-pdf-mail": sendPdfByMail(); break;
 
+      case "install-app":
+        if (deferredInstallPrompt) {
+          const promptEvt = deferredInstallPrompt;
+          deferredInstallPrompt = null;
+          promptEvt.prompt();
+          promptEvt.userChoice.finally(() => render());
+        }
+        break;
       case "logout":
         if (sb) sb.auth.signOut().then(() => location.reload());
         break;
@@ -1506,90 +1717,13 @@
   });
 
   /* ---------------------------------------------------------------- */
-  /* Auth form (only relevant when Supabase is configured)            */
-  /* ---------------------------------------------------------------- */
-  let authMode = "signin";
-  const authForm = document.getElementById("form-auth");
-  if (authForm) {
-    const emailEl = document.getElementById("auth-email");
-    const passwordEl = document.getElementById("auth-password");
-    const errorEl = document.getElementById("auth-error");
-    const infoEl = document.getElementById("auth-info");
-    const submitBtn = document.getElementById("btn-auth-submit");
-    const toggleBtn = document.getElementById("btn-auth-toggle");
-
-    authForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!sb) return;
-      errorEl.style.display = "none";
-      infoEl.style.display = "none";
-      submitBtn.disabled = true;
-      const email = emailEl.value.trim();
-      const password = passwordEl.value;
-      try {
-        if (authMode === "signin") {
-          const { error } = await sb.auth.signInWithPassword({ email, password });
-          if (error) throw error;
-          // onAuthStateChange below picks up the session and shows the app.
-        } else {
-          const { error } = await sb.auth.signUp({ email, password });
-          if (error) throw error;
-          infoEl.textContent = "Konto erstellt. Falls eine Bestätigungs-Mail nötig ist, prüfe dein Postfach und melde dich danach an.";
-          infoEl.style.display = "block";
-        }
-      } catch (err) {
-        errorEl.textContent = (err && err.message) || "Das hat nicht geklappt. Bitte prüfe deine Angaben.";
-        errorEl.style.display = "block";
-      } finally {
-        submitBtn.disabled = false;
-      }
-    });
-
-    toggleBtn.addEventListener("click", () => {
-      authMode = authMode === "signin" ? "signup" : "signin";
-      submitBtn.textContent = authMode === "signin" ? "Anmelden" : "Registrieren";
-      toggleBtn.textContent = authMode === "signin" ? "Noch kein Konto? Registrieren" : "Bereits registriert? Anmelden";
-      errorEl.style.display = "none";
-      infoEl.style.display = "none";
-    });
-  }
-
-  /* ---------------------------------------------------------------- */
   /* Init                                                              */
   /* ---------------------------------------------------------------- */
   async function init() {
     load(); // local cache first, so the app never starts truly empty
     ensureOwnerTimer();
 
-    if (supabaseEnabled) {
-      // onAuthStateChange fires immediately with the current session on subscribe,
-      // and again on every sign-in/sign-out — this alone drives the whole
-      // auth UI, so a fresh login also switches to the app without a manual reload.
-      sb.auth.onAuthStateChange(async (_event, session) => {
-        const user = session ? session.user : null;
-        const isNewLogin = user && (!currentUser || currentUser.id !== user.id);
-        currentUser = user;
-
-        if (user) {
-          try {
-            if (isNewLogin) {
-              await loadFromCloud();
-              const createdOwner = ensureOwnerTimer();
-              if (createdOwner) await cloudInsertTimer(createdOwner);
-              subscribeRealtime();
-            }
-            showApp();
-          } catch (e) {
-            console.warn("Supabase nicht erreichbar, starte im lokalen Modus:", e);
-            showApp();
-          }
-        } else {
-          showAuthGate();
-        }
-      });
-    } else {
-      showApp();
-    }
+    showApp();
   }
 
   if (document.readyState === "loading") {

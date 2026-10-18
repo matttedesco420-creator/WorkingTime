@@ -26,32 +26,6 @@
   </div>
 </div>
 
-<!-- ============ AUTH GATE (nur sichtbar, wenn Supabase in config.js konfiguriert ist) ============ -->
-<div class="auth-gate" id="auth-gate" style="display:none;">
-  <div class="auth-card">
-    <div class="auth-logo">⏱</div>
-    <h1 class="auth-title">WorkTime</h1>
-    <p class="auth-sub" id="auth-sub">Melde dich an, um deine Zeiten in der Cloud zu speichern.</p>
-
-    <form id="form-auth">
-      <div class="field">
-        <label for="auth-email">E-Mail</label>
-        <input type="email" id="auth-email" autocomplete="email" required />
-      </div>
-      <div class="field">
-        <label for="auth-password">Passwort</label>
-        <input type="password" id="auth-password" autocomplete="current-password" required minlength="6" />
-      </div>
-      <p class="hint warn" id="auth-error" style="display:none;"></p>
-      <p class="hint ok" id="auth-info" style="display:none;"></p>
-      <button type="submit" class="btn btn-primary btn-block" id="btn-auth-submit">Anmelden</button>
-    </form>
-    <button type="button" class="btn btn-ghost btn-block" id="btn-auth-toggle" style="margin-top:10px;">
-      Noch kein Konto? Registrieren
-    </button>
-  </div>
-</div>
-
 <div class="app-shell" id="app-shell" style="display:none;">
   <div class="content">
     <div class="header-row">
@@ -86,9 +60,8 @@
   </button>
 </nav>
 
-<script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="lib/xlsx.full.min.js"></script>
+<script src="lib/jspdf.umd.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

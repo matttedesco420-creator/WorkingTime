@@ -224,3 +224,8 @@ th { font-weight: 600; color: var(--ink-soft); font-size: 11.5px; }
   #print-area, #print-area * { visibility: visible; }
   #print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 0; background: #fff; }
 }
+
+.day-activities { color: #8A948D; font-size: 11.5px; font-weight: 400; }
+
+.mail-row { display: flex; gap: 10px; margin: 10px 0 14px; }
+.mail-row input { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid #C9D0C9; border-radius: 10px; background: #fff; font: inherit; font-size: 14px; }
